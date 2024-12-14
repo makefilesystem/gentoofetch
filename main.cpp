@@ -13,6 +13,8 @@
 #include <array>
 #include <memory>
 #include <stdexcept>
+#include <filesystem>
+namespace fs = std::filesystem;
 
 class SystemInfo {
 public:
@@ -27,8 +29,6 @@ public:
     std::string memory;
     std::string portage;
     std::string profile;
-    std::string gcc;
-
     static SystemInfo collect();
 
 private:
@@ -38,6 +38,9 @@ private:
     static std::string getMemoryInfo();
     static std::string getPackagesCount();
     static std::string execCommand(const std::string& cmd);
+    static std::string getProfile();
+    static std::string getGccVersion();
+    static std::string getTerminal();
 };
 
 std::string SystemInfo::readFile(const std::string& path) {
@@ -93,15 +96,48 @@ std::string SystemInfo::getCpuInfo() {
 }
 
 std::string SystemInfo::getMemoryInfo() {
-    struct sysinfo sys_info;
-    if (sysinfo(&sys_info) == 0) {
-        std::ostringstream mem_stream;
-        mem_stream << (sys_info.totalram - sys_info.freeram) / (1024 * 1024) << "M / "
-                   << sys_info.totalram / (1024 * 1024) << "M";
-        return mem_stream.str();
+    std::ifstream file("/proc/meminfo");
+    if (!file.is_open()) {
+        return "N/A";
+    }
+    std::string line;
+    long total = 0, free = 0;
+    while (std::getline(file, line)) {
+        if (line.find("MemTotal:") == 0) {
+            total = std::stol(line.substr(line.find(":") + 1)) / 1024;
+        } else if (line.find("MemAvailable:") == 0) {
+            free = std::stol(line.substr(line.find(":") + 1)) / 1024;
+        }
+        if (total && free) break;
+    }
+    return fmt::format("{}M / {}M", (total - free), total);
+}
+
+std::string SystemInfo::getPackagesCount() {
+    int count = 0;
+    std::string path = "/var/db/pkg";
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(path)) {
+        if (entry.is_directory()) {
+            ++count;
+        }
+    }
+    return std::to_string(count);
+}
+
+std::string SystemInfo::getProfile() {
+    char buf[1024];
+    ssize_t len = readlink("/etc/portage/make.profile", buf, sizeof(buf) - 1);
+    if (len != -1) {
+        buf[len] = '\0';
+        return std::string(buf);
     }
     return "N/A";
 }
+
+std::string SystemInfo::getTerminal() {
+    return isatty(STDIN_FILENO) ? (ttyname(STDIN_FILENO) ? ttyname(STDIN_FILENO) : "N/A") : "N/A";
+}
+
 
 SystemInfo SystemInfo::collect() {
     SystemInfo info;
@@ -122,15 +158,13 @@ SystemInfo SystemInfo::collect() {
     }
 
     info.uptime = getUptime();
-    info.packages = execCommand("qlist -I | wc -l");
+    info.packages = getPackagesCount();
     info.shell = getenv("SHELL") ? getenv("SHELL") : "N/A";
-    info.terminal = execCommand("tty");
+    info.terminal = isatty(STDIN_FILENO) ? ttyname(STDIN_FILENO) : "N/A";
     info.cpu = getCpuInfo();
     info.memory = getMemoryInfo();
     info.portage = execCommand("portageq --version");
-    info.profile = execCommand("readlink /etc/portage/make.profile");
-    info.gcc = execCommand("gcc --version | grep gcc");
-
+    info.profile = fs::read_symlink("/etc/portage/make.profile").string();
     return info;
 }
 
@@ -161,15 +195,13 @@ void printSystemInfo(const SystemInfo& info) {
     printField("Host", info.host);
     printField("Kernel", info.kernel);
     printField("Uptime", info.uptime);
-    printField("Packages", info.packages, false);
+    printField("Packages", info.packages);
     printField("Shell", info.shell);
-    printField("Terminal", info.terminal, false); // false Это типо чтоб не было лишних пропусков строки
+    printField("Terminal", info.terminal);
     printField("CPU", info.cpu);
     printField("Memory", info.memory);
     printField("Portage", info.portage, false);
-    printField("Profile", info.profile, false);
-    printField("gcc", info.gcc);
-
+    printField("Profile", info.profile);
     fmt::print("\n");  
 }
 

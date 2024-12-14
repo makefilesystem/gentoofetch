@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -O3 -Wall -std=c++17
+CXXFLAGS = -O3 -Wall -std=c++20 -march=native -flto -funroll-loops -pipe
 LDFLAGS = -lfmt
 INCLUDE_DIRS = -I/usr/include
 LIB_DIRS = -L/usr/lib
